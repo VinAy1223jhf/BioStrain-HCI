@@ -1,284 +1,576 @@
-# Ref: https://learnopencv.com/building-a-body-posture-analysis-system-using-mediapipe/
-
 import cv2
-import time
-import math as m
 import mediapipe as mp
+import numpy as np
+import time
 import argparse
+import os
 
-mp_drawing = mp.solutions.drawing_utils
-mp_pose = mp.solutions.pose
-
-def findDistance(x1, y1, x2, y2):
-    """
-    Calculate the Euclidean distance between two points.
-
-    Args:
-        x1, y1: Coordinates of the first point.
-        x2, y2: Coordinates of the second point.
-
-    Returns:
-        Distance between the two points.
-    """
-    dist = m.sqrt((x2 - x1)**2 + (y2 - y1)**2)
-    return dist
-
-def findAngle(x1, y1, x2, y2):
-    """
-    Calculate the angle between two points with respect to the y-axis.
-
-    Args:
-        x1, y1: Coordinates of the first point.
-        x2, y2: Coordinates of the second point.
-
-    Returns:
-        Angle in degrees.
-    """
-    theta = m.acos((y2 - y1) * (-y1) / (m.sqrt((x2 - x1)**2 + (y2 - y1)**2) * y1))
-    degree = int(180/m.pi) * theta
-    return degree
-
-def sendWarning(x):
-    """
-    Placeholder function for sending a warning.
-    """
-    print("You better change your posture or you'll die!!")
-
+# parsing arguments. basically passing alert time and video path or webcam
 def parse_arguments():
-    # offset threshold -> Distance between left and right shoulders
-        # Why It Exists:
-        # This checks whether the person is:
-        # Facing sideways (correct for posture analysis)
-        # Facing front (bad for angle calculation)
-    # --neck-angle-threshold -> angle between left shoulder and left ear
-    # torso threshold -> angle between hip and shoulder -> how m,uch upper body is leaning
-    # time-threshold -> alert would be generated after this much time of bad posture
+    parser = argparse.ArgumentParser(description="Posture Monitor")
 
-    parser = argparse.ArgumentParser(description='Posture Monitor with MediaPipe')
-    parser.add_argument('--video', type=str, default=0, help='Path to the input video file. If not provided, the webcam will be used.')
+    parser.add_argument('--video', type=str, default=None,
+                        help="Path to video file. If not provided, webcam is used.")
 
-    parser.add_argument('--offset-threshold', type=int, default=100, help='Threshold value for shoulder alignment.')
-    parser.add_argument('--neck-angle-threshold', type=int, default=25, help='Threshold value for neck inclination angle.')
-    parser.add_argument('--torso-angle-threshold', type=int, default=10, help='Threshold value for torso inclination angle.')
-    parser.add_argument('--time-threshold', type=int, default=180, help='Time threshold for triggering a posture alert.')
-    parser.add_argument('--save-video', action='store_true', help='Save output video')
-    parser.add_argument('--output-dir', type=str, default='output', help='Output directory')
+    parser.add_argument('--alert-time', type=int, default=60,
+                        help="Seconds of continuous bad posture before alert.")
 
     return parser.parse_args()
 
-def main(video_path=None, offset_threshold=100, neck_angle_threshold=25, 
-         torso_angle_threshold=10, time_threshold=180, 
-         save_video=False, output_dir="output"):
 
-    # Initialize frame counters.
-    good_frames = 0
-    bad_frames = 0
+# initialize mrdiapipe
+mp_pose = mp.solutions.pose
+mp_drawing = mp.solutions.drawing_utils
 
-    # Font type.
-    font = cv2.FONT_HERSHEY_SIMPLEX
+pose = mp_pose.Pose(
+    static_image_mode=False,
+    min_detection_confidence=0.5,
+    min_tracking_confidence=0.5
+)
 
-    # Colors.
-    blue = (255, 127, 0)
-    red = (50, 50, 255)
-    green = (127, 255, 0)
-    dark_blue = (127, 20, 0)
-    light_green = (127, 233, 100)
-    yellow = (0, 255, 255)
-    pink = (255, 0, 255)
-    white = (255, 255, 255)
+# if recorded video as input then save the output, if webcam then dont save it 
+args = parse_arguments()
 
-    # Initialize mediapipe pose class.
-    mp_pose = mp.solutions.pose
-    pose = mp_pose.Pose()
+if args.video is not None:
+    cap = cv2.VideoCapture(args.video)
+    save_output = True
+else:
+    cap = cv2.VideoCapture(0)
+    save_output = False
 
-    # For file input, replace file name with <path>.
-    cap = cv2.VideoCapture(video_path) if video_path else cv2.VideoCapture(0)
-    if not cap.isOpened():
-        print("Error: Could not open video.")
-        return
-    # Setup video writer if saving is enabled
-    out = None
-    if save_video:
-        import os
-        os.makedirs(output_dir, exist_ok=True)
-
-        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        fps = cap.get(cv2.CAP_PROP_FPS)
-
-        output_path = os.path.join(output_dir, "output.mp4")
-        out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
-        print(f"Saving video to: {output_path}")
-
-    # Meta.
-    fps = int(cap.get(cv2.CAP_PROP_FPS))
-
-    while True:
-        # Capture frames.
-        success, image = cap.read()
-
-        if not success:
-            print("Null.Frames")
-            break
-
-        # Get fps.
-        fps = cap.get(cv2.CAP_PROP_FPS)
-
-        # Get height and width of the frame.
-        h, w = image.shape[:2]
-
-        # Convert the BGR image to RGB.
-        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-
-        # Process the image.
-        keypoints = pose.process(image)
-
-        # Convert the image back to BGR.
-        image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
-
-        # Use lm and lmPose as representative of the following methods.
-        lm = keypoints.pose_landmarks
-        lmPose = mp_pose.PoseLandmark
-
-        # Left shoulder.
-        l_shldr_x = int(lm.landmark[lmPose.LEFT_SHOULDER].x * w)
-        l_shldr_y = int(lm.landmark[lmPose.LEFT_SHOULDER].y * h)
-
-        # Right shoulder.
-        r_shldr_x = int(lm.landmark[lmPose.RIGHT_SHOULDER].x * w)
-        r_shldr_y = int(lm.landmark[lmPose.RIGHT_SHOULDER].y * h)
-
-        # Left ear.
-        l_ear_x = int(lm.landmark[lmPose.LEFT_EAR].x * w)
-        l_ear_y = int(lm.landmark[lmPose.LEFT_EAR].y * h)
-
-        # Left hip.
-        l_hip_x = int(lm.landmark[lmPose.LEFT_HIP].x * w)
-        l_hip_y = int(lm.landmark[lmPose.LEFT_HIP].y * h)
-
-        # Calculate distance between left shoulder and right shoulder points.
-        offset = findDistance(l_shldr_x, l_shldr_y, r_shldr_x, r_shldr_y)
-
-        # Assist to align the camera to point at the side view of the person.
-        # Offset threshold 30 is based on results obtained from analysis over 100 samples.
-        if offset < offset_threshold:
-            cv2.putText(image, str(int(offset)) + ' Shoulders aligned', (w - 280, 30), font, 0.6, green, 2)
-        else:
-            cv2.putText(image, str(int(offset)) + ' Shoulders not aligned', (w - 280, 30), font, 0.6, red, 2)
-
-        # Calculate angles.
-        # neck inc -> the angle between shoulder and ear.
-        neck_inclination = findAngle(l_shldr_x, l_shldr_y, l_ear_x, l_ear_y)
-        # Torso inclination -> angle between hip and shoulder
-        torso_inclination = findAngle(l_hip_x, l_hip_y, l_shldr_x, l_shldr_y)
-
-        # Draw landmarks.
-        cv2.circle(image, (l_shldr_x, l_shldr_y), 7, white, 2)
-        cv2.circle(image, (l_ear_x, l_ear_y), 7, white, 2)
-
-        # Let's take y - coordinate of P3 100px above x1,  for display elegance.
-        # Although we are taking y = 0 while calculating angle between P1,P2,P3.
-        cv2.circle(image, (l_shldr_x, l_shldr_y - 100), 7, white, 2)
-        cv2.circle(image, (r_shldr_x, r_shldr_y), 7, pink, -1)
-        cv2.circle(image, (l_hip_x, l_hip_y), 7, yellow, -1)
-
-        # Similarly, here we are taking y - coordinate 100px above x1. Note that
-        # you can take any value for y, not necessarily 100 or 200 pixels.
-        cv2.circle(image, (l_hip_x, l_hip_y - 100), 7, yellow, -1)
-
-        # Put text, Posture and angle inclination.
-        # Text string for display.
-        angle_text_string_neck = 'Neck inclination: ' + str(int(neck_inclination))
-        angle_text_string_torso = 'Torso inclination: ' + str(int(torso_inclination))
-
-        # Determine whether good posture or bad posture.
-        # The threshold angles have been set based on intuition.
-        if neck_inclination < neck_angle_threshold and torso_inclination < torso_angle_threshold:
-            bad_frames = 0
-            good_frames += 1
-
-            cv2.putText(image, angle_text_string_neck, (10, 30), font, 0.6, light_green, 2)
-            cv2.putText(image, angle_text_string_torso, (10, 60), font, 0.6, light_green, 2)
-            cv2.putText(image, str(int(neck_inclination)), (l_shldr_x + 10, l_shldr_y), font, 0.9, light_green, 2)
-            cv2.putText(image, str(int(torso_inclination)), (l_hip_x + 10, l_hip_y), font, 0.9, light_green, 2)
-
-            # Join landmarks.
-            cv2.line(image, (l_shldr_x, l_shldr_y), (l_ear_x, l_ear_y), green, 2)
-            cv2.line(image, (l_shldr_x, l_shldr_y), (l_shldr_x, l_shldr_y - 100), green, 2)
-            cv2.line(image, (l_hip_x, l_hip_y), (l_shldr_x, l_shldr_y), green, 2)
-            cv2.line(image, (l_hip_x, l_hip_y), (l_hip_x, l_hip_y - 100), green, 2)
-
-        else:
-            good_frames = 0
-            bad_frames += 1
-
-            cv2.putText(image, angle_text_string_neck, (10, 30), font, 0.6, red, 2)
-            cv2.putText(image, angle_text_string_torso, (10, 60), font, 0.6, red, 2)
-            cv2.putText(image, str(int(neck_inclination)), (l_shldr_x + 10, l_shldr_y), font, 0.9, red, 2)
-            cv2.putText(image, str(int(torso_inclination)), (l_hip_x + 10, l_hip_y), font, 0.9, red, 2)
-
-            # Join landmarks.
-            cv2.line(image, (l_shldr_x, l_shldr_y), (l_ear_x, l_ear_y), red, 2)
-            cv2.line(image, (l_shldr_x, l_shldr_y), (l_shldr_x, l_shldr_y - 100), red, 2)
-            cv2.line(image, (l_hip_x, l_hip_y), (l_shldr_x, l_shldr_y), red, 2)
-            cv2.line(image, (l_hip_x, l_hip_y), (l_hip_x, l_hip_y - 100), red, 2)
-
-        # Calculate the time of remaining in a particular posture.
-        good_time = (1 / fps) * good_frames
-        bad_time = (1 / fps) * bad_frames
-
-        # Pose time.
-        if good_time > 0:
-            time_string_good = 'Good Posture Time : ' + str(round(good_time, 1)) + 's'
-            cv2.putText(image, time_string_good, (10, h - 20), font, 0.9, green, 2)
-        else:
-            time_string_bad = 'Bad Posture Time : ' + str(round(bad_time, 1)) + 's'
-            cv2.putText(image, time_string_bad, (10, h - 20), font, 0.9, red, 2)
-
-        # If you stay in bad posture for more than 3 minutes (180s) send an alert.
-        if bad_time > time_threshold:
-            sendWarning()
-
-        #above logic is for pre recorded videos. if we use webcamthen use realtime time calculation
-        # start_time = time.time()
-        # elapsed_time = time.time() - start_time
-        
+# verify if video file is opened/input video is read
+if not cap.isOpened():
+    print("Error: Could not open video source.")
+    exit()
 
 
-        # Flip the image horizontally for a selfie-view display.
-        cv2.imshow('MediaPipe Pose', image)
-        if save_video and out is not None:
-            out.write(image)
+# if recorded video, then where and how to save it
+out = None
 
-        # Exit the loop if the 'q' key is pressed.
+if save_output:
+    os.makedirs("output", exist_ok=True)
+
+    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    fps = cap.get(cv2.CAP_PROP_FPS)
+
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    out = cv2.VideoWriter("output/processed.mp4", fourcc, fps, (width, height))
+
+    print("Saving processed video to output/processed.mp4")
+
+
+# calculation of angle
+def calculate_angle(a, b, c):
+    """
+    Calculates angle between three points:
+    angle ABC (with B as vertex)
+    """
+
+    a = np.array(a)
+    b = np.array(b)
+    c = np.array(c)
+
+    ba = a - b
+    bc = c - b
+
+    # cos(theta) = (BA · BC) / (|BA| |BC|)
+    cosine_angle = np.dot(ba, bc) / (np.linalg.norm(ba) * np.linalg.norm(bc))
+    angle = np.degrees(np.arccos(cosine_angle))
+
+    return angle
+
+# caliberation for first 30 frames. assumes that user is sitting corret in the first second(basically gets a reference)
+# Calibration variables
+is_calibrated = False
+calibration_frames = 0
+calibration_shoulder_angles = []
+calibration_neck_angles = []
+
+# orientation detection
+current_orientation = None
+orientation_stable_start = None
+STABILITY_DURATION = 2  # seconds
+
+
+front_reference = None
+side_reference = None
+
+calibrating = False
+calibration_start_time = None
+calibration_orientation = None
+calibration_data = []
+CALIBRATION_DURATION = 3
+
+# bad posture timer
+bad_posture_start = None
+alert_triggered = False
+
+# threshold for front and side angles
+FRONT_THRESHOLD = 8
+SIDE_HEAD_THRESHOLD = 8
+SIDE_HIP_THRESHOLD = 4
+SIDE_COMBO_THRESHOLD = 6
+
+# we will not display every deviation in angle. we will be displaying the mean of last 5 angle values bcz
+# Angle might jump:
+# 78° → 80° → 75° → 82° → 74°
+# Even if posture didn’t really change.
+# That can trigger false deviation.
+SMOOTHING_WINDOW = 5
+front_angle_buffer = []
+
+side_head_buffer = []
+side_hip_buffer = []
+side_combo_buffer = []
+
+
+while cap.isOpened():
+
+    # read frame from video
+    ret, frame = cap.read()
+    if not ret:
+        break
+
+    # get current time
+    current_time = time.time()
+
+    # convert frame to RGB
+    rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+
+    # process frame with pose model
+    results = pose.process(rgb_frame)
+
+    # safe pose check
+    if not results.pose_landmarks:
+        cv2.imshow("Posture Monitor", frame)
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
+        continue
 
-    # Release the camera and close the windows.
-    if out is not None:
-        out.release()
+    # get landmarks from pose model
+    landmarks = results.pose_landmarks.landmark
 
-    cap.release()
-    cv2.destroyAllWindows()
+    # -------------------------
+    # EXTRACT LANDMARKS
+    # -------------------------
 
-if __name__ == "__main__":
-    args = parse_arguments()
-    print
-    print("Arguments:")
-    print(f"Video: {args.video}")
-    print(f"Offset Threshold: {args.offset_threshold}")
-    print(f"Neck Angle Threshold: {args.neck_angle_threshold}")
-    print(f"Torso Angle Threshold: {args.torso_angle_threshold}")
-    print(f"Time Threshold: {args.time_threshold}")
+    # get left shoulder landmark
+    left_shoulder = (
+        int(landmarks[mp_pose.PoseLandmark.LEFT_SHOULDER.value].x * frame.shape[1]),
+        int(landmarks[mp_pose.PoseLandmark.LEFT_SHOULDER.value].y * frame.shape[0])
+    )
 
-    main(
-    video_path=args.video,
-    offset_threshold=args.offset_threshold,
-    neck_angle_threshold=args.neck_angle_threshold,
-    torso_angle_threshold=args.torso_angle_threshold,
-    time_threshold=args.time_threshold,
-    save_video=args.save_video,
-    output_dir=args.output_dir
-)
+    # get right shoulder landmark
+    right_shoulder = (
+        int(landmarks[mp_pose.PoseLandmark.RIGHT_SHOULDER.value].x * frame.shape[1]),
+        int(landmarks[mp_pose.PoseLandmark.RIGHT_SHOULDER.value].y * frame.shape[0])
+    )
+
+    # get neck center landmark
+    neck_center = (
+        (left_shoulder[0] + right_shoulder[0]) // 2,
+        (left_shoulder[1] + right_shoulder[1]) // 2
+    )
+
+    # get nose landmark
+    nose = (
+        int(landmarks[mp_pose.PoseLandmark.NOSE.value].x * frame.shape[1]),
+        int(landmarks[mp_pose.PoseLandmark.NOSE.value].y * frame.shape[0])
+    )
+
+    # -------------------------
+    # FRONT ANGLE
+    # -------------------------
+
+    # calculate front angle
+    front_angle = calculate_angle(left_shoulder, neck_center, nose)
+
+    # add front angle to buffer
+    front_angle_buffer.append(front_angle)
+
+    # remove oldest front angle from buffer if buffer is full
+    if len(front_angle_buffer) > SMOOTHING_WINDOW:
+        front_angle_buffer.pop(0)
+
+    # calculate mean of front angle buffer
+    smoothed_front_angle = np.mean(front_angle_buffer)
+    
+
+
+
+    # ------------------------- 
+    # DYNAMIC SIDE SELECTION
+    # -------------------------
+
+    left_visibility = landmarks[mp_pose.PoseLandmark.LEFT_SHOULDER.value].visibility
+    right_visibility = landmarks[mp_pose.PoseLandmark.RIGHT_SHOULDER.value].visibility
+
+    if left_visibility > right_visibility:
+        side_shoulder = left_shoulder
+        side_hip = (
+            int(landmarks[mp_pose.PoseLandmark.LEFT_HIP.value].x * frame.shape[1]),
+            int(landmarks[mp_pose.PoseLandmark.LEFT_HIP.value].y * frame.shape[0])
+        )
+        side_ear = (
+            int(landmarks[mp_pose.PoseLandmark.LEFT_EAR.value].x * frame.shape[1]),
+            int(landmarks[mp_pose.PoseLandmark.LEFT_EAR.value].y * frame.shape[0])
+        )
+    else:
+        side_shoulder = right_shoulder
+        side_hip = (
+            int(landmarks[mp_pose.PoseLandmark.RIGHT_HIP.value].x * frame.shape[1]),
+            int(landmarks[mp_pose.PoseLandmark.RIGHT_HIP.value].y * frame.shape[0])
+        )
+        side_ear = (
+            int(landmarks[mp_pose.PoseLandmark.RIGHT_EAR.value].x * frame.shape[1]),
+            int(landmarks[mp_pose.PoseLandmark.RIGHT_EAR.value].y * frame.shape[0])
+        )
+
+    # -------------------------
+    # SIDE ANGLES
+    # -------------------------
+    # calculate side head shoulder angle
+    side_head_shoulder_angle = calculate_angle(side_ear, side_shoulder, side_hip)
+
+    # calculate side hip vertical line
+    hip_vertical = (side_hip[0], side_hip[1] - 100)
+
+    # calculate side hip shoulder angle
+    side_hip_shoulder_angle = calculate_angle(side_shoulder, side_hip, hip_vertical)
+
+    # calculate side shoulder hip head angle
+    side_shoulder_hip_head_angle = calculate_angle(side_shoulder, side_hip, side_ear)
+
+    # smoothing side angles
+    side_head_buffer.append(side_head_shoulder_angle)
+    side_hip_buffer.append(side_hip_shoulder_angle)
+    side_combo_buffer.append(side_shoulder_hip_head_angle)
+
+    # remove oldest side angles from buffer if buffer is full
+    if len(side_head_buffer) > SMOOTHING_WINDOW:
+        side_head_buffer.pop(0)
+        side_hip_buffer.pop(0)
+        side_combo_buffer.pop(0)
+
+    # calculate mean of side angles
+    smoothed_head = np.mean(side_head_buffer)
+    smoothed_hip = np.mean(side_hip_buffer)
+    smoothed_combo = np.mean(side_combo_buffer)
+
+    # -------------------------
+    # ORIENTATION DETECTION
+    # -------------------------
+
+    dx = abs(left_shoulder[0] - right_shoulder[0])
+    dy = abs(left_shoulder[1] - right_shoulder[1])
+
+    # calculate horizontal ratio
+    horizontal_ratio = dx / frame.shape[1]
+    shoulder_line_angle = np.degrees(np.arctan2(dy, dx))
+
+    if horizontal_ratio > 0.2 and shoulder_line_angle < 20:
+        detected_orientation = "FRONT VIEW"
+    else:
+        detected_orientation = "SIDE VIEW"
+
+    # -------------------------
+    # ORIENTATION STABILITY
+    # -------------------------
+
+    # This part chooses which orientation ("FRONT VIEW" or "SIDE VIEW") should be shown:
+    # - If we are calibrating, just use the orientation we are calibrating for, so it doesn't change suddenly.
+    # - If not calibrating, keep track of the person's orientation:
+    #     * When the orientation changes (or on the very first run), update the "current_orientation" and also save what time it changed.
+    #     * Always use "current_orientation" as the orientation to show right now.
+    if calibrating:
+        orientation = calibration_orientation
+    else:
+        if current_orientation is None:
+            current_orientation = detected_orientation
+            orientation_stable_start = current_time
+
+        elif detected_orientation != current_orientation:
+            current_orientation = detected_orientation
+            orientation_stable_start = current_time
+
+        orientation = current_orientation
+
+    # This part checks if the orientation has been stable for a while:
+    # - If the orientation changed recently (orientation_stable_start is not None), check if enough time has passed.
+    # - If yes, set stable to True, meaning the orientation has been stable for a while.
+    stable = False
+    if orientation_stable_start is not None:
+        if current_time - orientation_stable_start >= STABILITY_DURATION:
+            stable = True
+
+    # display orientation
+    cv2.putText(frame, f"Orientation: {orientation}",
+                (10, 20), cv2.FONT_HERSHEY_SIMPLEX,
+                0.7, (255, 255, 0), 2)
+
+    # -------------------------
+    # CALIBRATION
+    # -------------------------
+
+    if not calibrating and stable:
+        if orientation == "FRONT VIEW" and front_reference is None:
+            calibrating = True
+            calibration_start_time = current_time
+            calibration_orientation = "FRONT VIEW"
+            calibration_data = []
+
+        elif orientation == "SIDE VIEW" and side_reference is None:
+            calibrating = True
+            calibration_start_time = current_time
+            calibration_orientation = "SIDE VIEW"
+            calibration_data = []
+
+    if calibrating:
+        if calibration_orientation == "FRONT VIEW":
+            calibration_data.append(smoothed_front_angle)
+        else:
+            calibration_data.append((smoothed_head, smoothed_hip, smoothed_combo))
+
+        # display calibration message
+        cv2.putText(frame, "Calibrating...",
+                    (10, 50), cv2.FONT_HERSHEY_SIMPLEX,
+                    0.8, (0, 255, 255), 2)
+
+        if current_time - calibration_start_time >= CALIBRATION_DURATION:
+
+            if calibration_orientation == "FRONT VIEW":
+                front_reference = np.mean(calibration_data)
+            else:
+                head_vals = [x[0] for x in calibration_data]
+                hip_vals = [x[1] for x in calibration_data]
+                combo_vals = [x[2] for x in calibration_data]
+
+                side_reference = {
+                    "head_shoulder": np.mean(head_vals),
+                    "hip_shoulder": np.mean(hip_vals),
+                    "shoulder_hip_head": np.mean(combo_vals)
+                }
+
+            calibrating = False
+
+    
+    if orientation == "FRONT VIEW":
+
+        # Draw lines for front angle
+        cv2.line(frame, neck_center, left_shoulder, (255, 0, 0), 2)
+        cv2.line(frame, neck_center, nose, (0, 255, 0), 2)
+
+        # Draw vertex
+        cv2.circle(frame, neck_center, 5, (0, 0, 255), -1)
+    else: 
+        cv2.line(frame, side_shoulder, side_ear, (255, 0, 0), 2)
+        cv2.line(frame, side_shoulder, side_hip, (0, 255, 0), 2)
+
+        cv2.circle(frame, side_shoulder, 5, (0, 0, 255), -1)
+
+        hip_vertical = (side_hip[0], side_hip[1] - 100)
+
+        cv2.line(frame, side_hip, hip_vertical, (255, 255, 0), 2)
+        cv2.line(frame, side_hip, side_shoulder, (0, 255, 255), 2)
+
+        cv2.circle(frame, side_hip, 5, (0, 0, 255), -1)
+
+        cv2.line(frame, side_hip, side_shoulder, (200, 0, 200), 2)
+        cv2.line(frame, side_hip, side_ear, (0, 200, 200), 2)
+
+    # -------------------------
+    # MONITORING
+    # -------------------------
+
+    posture_status = "UNKNOWN"
+    color = (255, 255, 255)
+
+    if not calibrating:
+
+        if orientation == "FRONT VIEW" and front_reference is not None:
+            deviation = abs(smoothed_front_angle - front_reference)
+            if deviation > FRONT_THRESHOLD:
+                posture_status = "BAD POSTURE"
+                color = (0, 0, 255)
+            else:
+                posture_status = "GOOD POSTURE"
+                color = (0, 255, 0)
+
+        elif orientation == "SIDE VIEW" and side_reference is not None:
+
+            dev1 = abs(smoothed_head - side_reference["head_shoulder"])
+            dev2 = abs(smoothed_hip - side_reference["hip_shoulder"])
+            dev3 = abs(smoothed_combo - side_reference["shoulder_hip_head"])
+
+            score = 0
+
+            if dev1 > SIDE_HEAD_THRESHOLD:
+                score += 1
+
+            if dev2 > SIDE_HIP_THRESHOLD:
+                score += 1
+
+            if dev3 > SIDE_COMBO_THRESHOLD:
+                score += 1
+
+            if score >= 2:
+                posture_status = "BAD POSTURE"
+                color = (0, 0, 255)
+            else:
+                posture_status = "GOOD POSTURE"
+                color = (0, 255, 0)
+
+
+    # display front angle values
+
+    if orientation == "FRONT VIEW":
+
+        cv2.putText(frame,
+                    f"Front Angle: {smoothed_front_angle:.1f}",
+                    (10, 150),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.6,
+                    (255, 255, 255),
+                    2)
+
+        # display front reference values
+        if front_reference is not None:
+            cv2.putText(frame,
+                        f"Front Ref: {front_reference:.1f}",
+                        (10, 175),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.6,
+                        (0, 255, 255),
+                        2)
+
+            deviation = abs(smoothed_front_angle - front_reference)
+
+            cv2.putText(frame,
+                        f"Deviation: {deviation:.1f}",
+                        (10, 200),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.6,
+                        (0, 165, 255),
+                        2)
+    # display side angle values
+    if orientation == "SIDE VIEW":
+
+        cv2.putText(frame,
+                    f"Head Angle: {smoothed_head:.1f}",
+                    (10, 150),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.6,
+                    (255, 255, 255),
+                    2)
+
+        cv2.putText(frame,
+                    f"Hip Shoulder Angle: {smoothed_hip:.1f}",
+                    (10, 175),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.6,
+                    (255, 255, 255),
+                    2)
+
+        cv2.putText(frame,
+                    f"Combo Angle: {smoothed_combo:.1f}",
+                    (10, 200),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.6,
+                    (255, 255, 255),
+                    2)
+    # display reference values
+        if side_reference is not None:
+
+            cv2.putText(frame,
+                        f"Head Ref: {side_reference['head_shoulder']:.1f}",
+                        (250, 150),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.6,
+                        (0, 255, 255),
+                        2)
+
+            cv2.putText(frame,
+                        f"Hip Ref: {side_reference['hip_shoulder']:.1f}",
+                        (250, 175),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.6,
+                        (0, 255, 255),
+                        2)
+
+            cv2.putText(frame,
+                        f"Combo Ref: {side_reference['shoulder_hip_head']:.1f}",
+                        (250, 200),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.6,
+                        (0, 255, 255),
+                        2)
+
+    # -------------------------
+    # BAD POSTURE TIMER
+    # -------------------------
+
+    bad_duration = 0
+
+    if posture_status == "BAD POSTURE":
+
+        if bad_posture_start is None:
+            bad_posture_start = current_time
+
+        bad_duration = current_time - bad_posture_start
+
+        if bad_duration >= args.alert_time:
+            alert_triggered = True
+    else:
+        bad_posture_start = None
+        alert_triggered = False
+
+    # display bad time
+    cv2.putText(frame,
+            f"Bad Time: {bad_duration:.1f}s",
+            (10, 110),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.7,
+            (0, 0, 255) if posture_status == "BAD POSTURE" else (200, 200, 200),
+            2)
+
+    # display good/bad posture status
+    cv2.putText(frame, posture_status,
+                (10, 80), cv2.FONT_HERSHEY_SIMPLEX,
+                1, color, 2)
+
+    # display alert message if alert is triggered
+    if alert_triggered:
+        cv2.putText(frame,
+                    "ALERT: Bad posture for 60 seconds!",
+                    (10, 120),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.8,
+                    (0, 0, 255),
+                    2)
+
+    # -------------------------
+    # DISPLAY + SAVE
+    # -------------------------
+
+    if save_output and out is not None:
+        out.write(frame)
+
+    cv2.imshow("Posture Monitor", frame)
+
+    if cv2.waitKey(1) & 0xFF == ord('q'):
+        break
+
+
+
+
+# cleanup
+cap.release()
+
+if out is not None:
+    out.release()
+
+cv2.destroyAllWindows()
+
+
 
