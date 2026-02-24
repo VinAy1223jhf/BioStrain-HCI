@@ -81,11 +81,6 @@ def calculate_angle(a, b, c):
     return angle
 
 # caliberation for first 30 frames. assumes that user is sitting corret in the first second(basically gets a reference)
-# Calibration variables
-is_calibrated = False
-calibration_frames = 0
-calibration_shoulder_angles = []
-calibration_neck_angles = []
 
 # orientation detection
 current_orientation = None
@@ -124,6 +119,16 @@ side_head_buffer = []
 side_hip_buffer = []
 side_combo_buffer = []
 
+fatigue = 0.0
+prev_time = time.time()
+
+S_baseline = 0.0278
+k = 0.0833
+recovery_rate = 0.3333  # will be used later for breaks
+
+T_max = 60
+T_min = 5
+
 
 while cap.isOpened():
 
@@ -132,8 +137,10 @@ while cap.isOpened():
     if not ret:
         break
 
-    # get current time
     current_time = time.time()
+    delta_time = current_time - prev_time
+    prev_time = current_time
+
 
     # convert frame to RGB
     rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -310,7 +317,7 @@ while cap.isOpened():
                 0.7, (255, 255, 0), 2)
 
     # -------------------------
-    # CALIBRATION
+    # CALIBRATION(taking refrence angles)
     # -------------------------
 
     if not calibrating and stable:
@@ -386,10 +393,18 @@ while cap.isOpened():
     posture_status = "UNKNOWN"
     color = (255, 255, 255)
 
+    severity = 0
+
     if not calibrating:
 
         if orientation == "FRONT VIEW" and front_reference is not None:
             deviation = abs(smoothed_front_angle - front_reference)
+
+            # Update this in monitoring section
+            severity = deviation / FRONT_THRESHOLD
+            severity = max(0, min(1.2, severity)) # Cap severity to prevent spikes
+
+
             if deviation > FRONT_THRESHOLD:
                 posture_status = "BAD POSTURE"
                 color = (0, 0, 255)
@@ -398,10 +413,17 @@ while cap.isOpened():
                 color = (0, 255, 0)
 
         elif orientation == "SIDE VIEW" and side_reference is not None:
-
             dev1 = abs(smoothed_head - side_reference["head_shoulder"])
             dev2 = abs(smoothed_hip - side_reference["hip_shoulder"])
             dev3 = abs(smoothed_combo - side_reference["shoulder_hip_head"])
+
+            severity = (
+                (dev1 / SIDE_HEAD_THRESHOLD) +
+                (dev2 / SIDE_HIP_THRESHOLD) +
+                (dev3 / SIDE_COMBO_THRESHOLD)
+            ) / 3
+
+            severity = max(0, min(1.2, severity))
 
             score = 0
 
@@ -421,7 +443,55 @@ while cap.isOpened():
                 posture_status = "GOOD POSTURE"
                 color = (0, 255, 0)
 
+        # -------------------------
+        # FATIGUE MODEL
+        # -------------------------
 
+        # -------------------------
+        # RESEARCH-CALIBRATED FATIGUE MODEL
+        # -------------------------
+
+        # Constants for 15-30 year old demographic
+        S_baseline = 0.0222  # Hits F=80 in 60 mins (Perfect Posture)
+        k_gain = 0.0888      # Scaled for 12-15 min burn at Severity 1.0
+
+        if not calibrating and severity is not None:
+            
+            # 1. Calculate Instantaneous Strain
+            # Note: We use linear severity here to match the 
+            # ergonomic research timelines more accurately.
+            current_strain = S_baseline + (k_gain * severity)
+
+            # 2. Update fatigue (Cumulative)
+            # delta_time ensures it's per second, not per frame
+            fatigue += current_strain * delta_time
+
+            # 3. Clamp fatigue between 0 and 100
+            fatigue = max(0, min(100, fatigue))
+
+        # -------------------------
+        # SIGMOID BREAK PROBABILITY
+        # -------------------------
+
+        F_critical = 80
+        a = 0.15
+
+        P_break = 1 / (1 + np.exp(-a * (fatigue - F_critical)))
+        cv2.putText(frame,
+            f"Break Prob: {P_break:.2f}",
+            (10, 330),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.6,
+            (255, 255, 255),
+            2)
+        if P_break > 0.8:
+            cv2.putText(frame,
+                    "HIGH FATIGUE! TAKE A BREAK.",
+                    (10, 360),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.8,
+                    (0, 0, 255),
+                    2)
     # display front angle values
 
     if orientation == "FRONT VIEW":
@@ -511,20 +581,27 @@ while cap.isOpened():
     # -------------------------
 
     bad_duration = 0
-
+    T_limit = 0
     if posture_status == "BAD POSTURE":
-
+        T_limit = T_max - (fatigue / 100) * (T_max - T_min)     
         if bad_posture_start is None:
             bad_posture_start = current_time
 
         bad_duration = current_time - bad_posture_start
 
-        if bad_duration >= args.alert_time:
+        if bad_duration >= T_limit:
             alert_triggered = True
     else:
         bad_posture_start = None
         alert_triggered = False
 
+    cv2.putText(frame,
+            f"Adaptive Limit: {T_limit:.1f}s",
+            (10, 230),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.6,
+            (180, 180, 180),
+            2)
     # display bad time
     cv2.putText(frame,
             f"Bad Time: {bad_duration:.1f}s",
@@ -538,11 +615,51 @@ while cap.isOpened():
     cv2.putText(frame, posture_status,
                 (10, 80), cv2.FONT_HERSHEY_SIMPLEX,
                 1, color, 2)
+    # -------------------------
+    # FATIGUE DISPLAY
+    # -------------------------
 
+    # Color coding fatigue
+    if fatigue < 30:
+        fatigue_color = (0, 255, 0)      # Green
+    elif fatigue < 70:
+        fatigue_color = (0, 255, 255)    # Yellow
+    else:
+        fatigue_color = (0, 0, 255)      # Red
+
+    cv2.putText(frame,
+                f"Fatigue: {fatigue:.1f}",
+                (10, 260),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.7,
+                fatigue_color,
+                2)
+    
+    # Fatigue progress bar
+    bar_x = 10
+    bar_y = 290
+    bar_width = 200
+    bar_height = 20
+
+    # Draw background
+    cv2.rectangle(frame,
+                (bar_x, bar_y),
+                (bar_x + bar_width, bar_y + bar_height),
+                (100, 100, 100),
+                -1)
+
+    # Draw filled portion
+    filled_width = int((fatigue / 100) * bar_width)
+
+    cv2.rectangle(frame,
+                (bar_x, bar_y),
+                (bar_x + filled_width, bar_y + bar_height),
+                fatigue_color,
+                -1)
     # display alert message if alert is triggered
     if alert_triggered:
         cv2.putText(frame,
-                    "ALERT: Bad posture for 60 seconds!",
+                    f"ALERT: Bad posture > {T_limit:.1f}s",
                     (10, 120),
                     cv2.FONT_HERSHEY_SIMPLEX,
                     0.8,
