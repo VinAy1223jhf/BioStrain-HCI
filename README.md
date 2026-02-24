@@ -1,6 +1,6 @@
 # Posture Monitor with MediaPipe 👤💻
 
-<img width="2048" height="1197" alt="909ad609-395a-49e5-abaa-4c64dc3396c3" src="https://github.com/user-attachments/assets/e5c9d0bb-dc61-4aa9-a66e-c91e8a99f5c8" />
+<img width="1277" height="713" alt="image" src="https://github.com/user-attachments/assets/2616b45a-a209-4d79-9f13-0a397d42a8a4" />
 
 ## Overview
 This project utilizes the MediaPipe library to create a real-time posture monitoring system using a webcam or video. The application assesses the alignment of the shoulders and the inclination of the neck and torso to determine whether the user is maintaining a good or bad posture. Additionally, it calculates the time spent in each posture and alerts the user if they remain in a bad posture for an extended period 🕒⚠️. 
