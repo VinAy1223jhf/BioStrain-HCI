@@ -179,7 +179,7 @@ Logs are saved as CSV files for plotting and analysis.
 git clone https://github.com/YOUR_USERNAME/posture-monitor
 cd posture-monitor
 ```
-## Step 2: Create a Virtual Environment (Recommended)
+## Step 2: Create a Virtual Environment - (use python 3.10.x)
 
 python -m venv venv
 
