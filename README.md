@@ -204,7 +204,7 @@ To use a video file:
 ```bash
 python app.py --video path/to/video.mp4
 ```
-## 📦 Requirements
+# 📦 Requirements
 
 - Python 3.8+
 
@@ -218,7 +218,7 @@ python app.py --video path/to/video.mp4
 
 - (Optional) Matplotlib / Pandas for analysis
 
-## 📌 Why This Project Is Different
+# 📌 Why This Project Is Different
 
 This system:
 
@@ -234,7 +234,7 @@ This system:
 
 - It bridges computer vision + biomechanics + fatigue modeling.
 
-## 🛠 Possible Improvements
+# 🛠 Possible Improvements
 
 - EMG-based physiological validation
 
@@ -244,11 +244,11 @@ This system:
 
 - Clinical or workplace validation studies
 
-## 🙌 Acknowledgment
+# 🙌 Acknowledgment
 
 Built using MediaPipe Pose
  for real-time skeletal tracking.
 
-## 📜 License
+# 📜 License
 
 This project is licensed under the MIT License.
