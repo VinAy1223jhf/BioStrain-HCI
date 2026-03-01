@@ -186,7 +186,7 @@ python -m venv venv
 ## Step 3: Activate it:
 ```bash
 venv\Scripts\activate
-```bash
+```
 
 Install requirements.txt
 ```bash
