@@ -1,75 +1,254 @@
-# Posture Monitor with MediaPipe 👤💻
+# Adaptive Vision-Based Posture Monitoring with Bio-Inspired Fatigue Modeling 👤💻
 
-<img width="1277" height="713" alt="image" src="https://github.com/user-attachments/assets/2616b45a-a209-4d79-9f13-0a397d42a8a4" />
+<img width="900" alt="demo" src="https://github.com/user-attachments/assets/2616b45a-a209-4d79-9f13-0a397d42a8a4" />
 
-## Overview
-This project utilizes the MediaPipe library to create a real-time posture monitoring system using a webcam or video. The application assesses the alignment of the shoulders and the inclination of the neck and torso to determine whether the user is maintaining a good or bad posture. Additionally, it calculates the time spent in each posture and alerts the user if they remain in a bad posture for an extended period 🕒⚠️. 
+---
 
-This code was created with the help of the article [**Building a Poor Body Posture Detection & Alert System Using MediaPipe Body Tracking**](https://learnopencv.com/building-a-body-posture-analysis-system-using-mediapipe/).
+## 📌 Overview
+
+This project is a real-time posture monitoring system built using **MediaPipe Pose** and a standard webcam.
+
+Unlike basic posture apps that only classify posture as *good* or *bad*, this system models **cumulative fatigue** using a biologically inspired approach.
+
+It combines:
+
+- Real-time skeletal landmark detection  
+- Orientation-aware posture analysis  
+- Personalized calibration  
+- Multi-angle deviation modeling  
+- Cumulative fatigue accumulation  
+- Adaptive alert timing  
+- Probabilistic break recommendation  
+- (Optional) Recovery and eye-strain modeling  
+
+The system behaves like a **fatigue-aware ergonomic assistant**, not just a posture checker.
+
+---
+
+# 🧠 Core Idea
+
+Most posture monitoring systems use fixed thresholds:
+
+> If angle > threshold → Bad posture
+
+However, real fatigue does not behave in a binary manner.
+
+Fatigue:
+
+- Builds gradually over time  
+- Depends on deviation intensity  
+- Decreases during rest  
+- Reduces tolerance as it accumulates  
+
+This project models posture strain as a **time-dependent fatigue state variable** rather than a simple threshold event.
+
+---
+
+# ⚙️ System Workflow
+
+## 1️⃣ Landmark Extraction
+
+MediaPipe Pose extracts 33 body landmarks in real time using your webcam.
+
+---
+
+## 2️⃣ Orientation Detection
+
+The system automatically detects:
+
+- **Front View**
+- **Side View**
+
+Different posture models are applied depending on the detected orientation.
+
+---
+
+## 3️⃣ Personalized Calibration
+
+During the first few seconds:
+
+- Your natural neutral posture is recorded  
+- Baseline angles are computed  
+- All future deviations are compared to your own reference  
+
+This avoids using global fixed thresholds.
+
+---
+
+## 4️⃣ Multi-Angle Severity Modeling
+
+Posture deviation is computed as:
+D = |θ - θ_ref|
 
 
-## Requirements
-* Python 3.x
-* OpenCV (`pip install opencv-python`)
-* NumPy (`pip install numpy`)
-* Mediapipe (`pip install mediapipe`)
+Severity is normalized:
+Severity = D / T_angle
 
-## Usage
-1. Clone the repository to your local machine:
-``` bash
-git clone https://github.com/mecantronic/posture-monitor
-```
 
-2. Navigate to the project directory:
-``` bash
+For side view, a **2-out-of-3 rule** is used across multiple angles to ensure robustness.
+
+A moving average filter reduces landmark noise.
+
+---
+
+## 5️⃣ Cumulative Fatigue Model
+
+Fatigue accumulates over time:
+F(t + Δt) = F(t) + (S_baseline + k × Severity) Δt
+
+
+- Neutral posture causes slow fatigue accumulation  
+- Poor posture accelerates fatigue  
+- Fatigue is bounded between 0 and 100  
+
+---
+
+## 6️⃣ Adaptive Alert Window
+
+As fatigue increases, posture tolerance decreases:
+T_limit = T_max - (F / 100)(T_max - T_min)
+
+
+- Fresh user → more tolerance  
+- Fatigued user → stricter posture enforcement  
+
+---
+
+## 7️⃣ Break Recommendation (Sigmoid Model)
+P_break = 1 / (1 + e^(-a(F - F_critical)))
+
+
+When fatigue crosses a high threshold:
+
+- The system transitions from posture correction  
+- To break recommendation  
+
+---
+
+## 8️⃣ Recovery Model (Extended Component)
+
+During detected breaks:
+F(t + Δt) = F(t) e^(-β Δt)
+
+
+Fatigue gradually decays, modeling physiological recovery.
+
+---
+
+## 9️⃣ Eye-Strain Model (EAR – Extended Component)
+
+Eye Aspect Ratio (EAR) can be used to estimate visual fatigue and integrate it into the fatigue model.
+
+This enables multi-modal fatigue estimation.
+
+---
+
+# 📊 On-Screen Output
+
+The system displays:
+
+- Orientation (Front / Side)  
+- Posture status  
+- Fatigue score (0–100)  
+- Adaptive tolerance timer  
+- Break probability  
+- Real-time visual overlays  
+
+---
+
+# 🧪 Experimental Logging
+
+The system can log:
+
+- Time  
+- Severity  
+- Fatigue  
+- Break probability  
+- Orientation  
+- Posture status  
+
+Logs are saved as CSV files for plotting and analysis.
+
+---
+
+# 🚀 How To Run This Project
+
+## Step 1: Clone the Repository
+
+```bash
+git clone https://github.com/YOUR_USERNAME/posture-monitor
 cd posture-monitor
 ```
+## Step 2: Create a Virtual Environment (Recommended)
 
-3. Create and activate a virtual environment:
-``` bash
 python -m venv venv
-```
-* On Windows:
-    ``` bash
-    venv\Scripts\activate
-    ```
-* On macOS and Linux:
-    ``` bash
-    source venv/bin/activate
-    ```
 
-4. Install the required dependencies:
-``` bash
+## Step 3: Activate it:
+```bash
+venv\Scripts\activate
+```bash
+
+Install requirements.txt
+```bash
 pip install -r requirements.txt
 ```
 
-5. Run the posture monitoring script:
-``` bash
-python app.py --video 'path/to/your/video.mp4' --offset-threshold 100 --neck-angle-threshold 25 --torso-angle-threshold 10 --time-threshold 180
+## Step 4: Run the Application
+
+To use your webcam:
+```bash
+python app.py
 ```
-* Optionally, you can omit --video to use the default webcam.
 
-6. Adjust your webcam to capture your posture, and the application will display real-time feedback on your posture status, inclination angles, and time spent in each posture. 📹👀
+To use a video file:
+```bash
+python app.py --video path/to/video.mp4
+```
+## 📦 Requirements
 
-## Features
-* Real-time posture monitoring using the webcam. 🔄
-* Visualization of shoulder alignment and neck/torso inclination angles. 📏🔄
-* Dynamic feedback on posture status (good or bad). 👍👎
-* Calculation of time spent in each posture. 🕒
-* Alert mechanism if bad posture is maintained for an extended period. ⚠️
+- Python 3.8+
 
-## Configuration
-You can adjust the following parameters in the posture_monitor.py script:
+- Webcam
 
-* **Video** (`--video`): Path of video file.
-* **Offset Threshold** (`--offset-threshold`): Threshold value for shoulder alignment. 📏
-* **Angle Thresholds** (`--neck-angle-threshold`, `--torso-angle-threshold`): Threshold values for neck and torso inclination angles. 📐
-* **Time Threshold** (`--time-threshold`): Time threshold for triggering a posture alert. 🕒
+- OpenCV
 
-## Acknowledgments
-This project utilizes the [MediaPipe](https://mediapipe.dev/) library for pose estimation. 👏
+- MediaPipe
 
-## License
-This project is licensed under the [MIT License](https://opensource.org/license/mit/). 📜
+- NumPy
 
-Feel free to contribute or report issues! 🚀
+- (Optional) Matplotlib / Pandas for analysis
+
+## 📌 Why This Project Is Different
+
+This system:
+
+- Models fatigue dynamically
+
+- Adapts posture tolerance over time
+
+- Uses personalized calibration
+
+- Integrates ergonomic research principles
+
+- Requires no wearable sensors
+
+- It bridges computer vision + biomechanics + fatigue modeling.
+
+## 🛠 Possible Improvements
+
+- EMG-based physiological validation
+
+- Long-term user adaptation
+
+- Machine learning parameter tuning
+
+- Clinical or workplace validation studies
+
+## 🙌 Acknowledgment
+
+Built using MediaPipe Pose
+ for real-time skeletal tracking.
+
+## 📜 License
+
+This project is licensed under the MIT License.
